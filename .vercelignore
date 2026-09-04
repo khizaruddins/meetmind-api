@@ -1,0 +1,26 @@
+# Ignore local database and data directory
+data/
+data/*
+*/pg_data/
+*/pg_WAL/
+*.db
+
+# Ignore environment files (configured via Vercel Dashboard)
+.env
+.env.local
+.env.*.local
+
+# Ignore test suites and coverage
+src/test/
+test/
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Git and OS metadata
+.git
+.DS_Store

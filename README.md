@@ -24,6 +24,11 @@ The core SaaS backend engine for **MeetMind**. Engineered with **NestJS**, **Pri
   - [2. Prisma Schema Push & Client Generation](#2-prisma-schema-push--client-generation)
   - [3. Database Seeding & RBAC Initialization](#3-database-seeding--rbac-initialization)
   - [4. Starting the Dev Server](#4-starting-the-dev-server)
+- [Deploying to Vercel (Serverless)](#-deploying-to-vercel-serverless)
+  - [1. Architecture & Cold Start Optimization](#1-architecture--cold-start-optimization)
+  - [2. Deploying via Vercel CLI or Dashboard](#2-deploying-via-vercel-cli-or-dashboard)
+  - [3. Vercel Environment Variables](#3-vercel-environment-variables)
+  - [4. Database Connection Pooling](#4-database-connection-pooling)
 - [REST API Catalog](#-rest-api-catalog)
   - [Authentication & Account Security](#1-authentication--account-security-v1auth)
   - [Session Management](#2-session-management-v1sessions)
@@ -161,6 +166,7 @@ cp .env.example .env
 | `ADMIN_SEED_EMAIL` | `string` | `admin@meetingrecorder.local` | Email of initial seeded super admin. |
 | `ADMIN_SEED_PASSWORD` | `string` | — | Plaintext seed password (hashed with Argon2id upon seeding). |
 | `ADMIN_SEED_NAME` | `string` | `Super Administrator` | Display name of the seeded admin account. |
+| `FRONTEND_URL` | `string` (URL) | `http://localhost:3000` | Web application URL (allowed for CORS in production). |
 
 > [!CAUTION]
 > **Production Security**: In production environments, set `ADMIN_SEED_ENABLED=false`. Never commit passwords or private API keys to version control.
@@ -217,6 +223,92 @@ Expected response:
   "timestamp": "2026-09-04T13:45:00.000Z"
 }
 ```
+
+---
+
+## 🌐 Deploying to Vercel (Serverless)
+
+`meeting-recorder-api` is pre-configured and optimized to run as a **Vercel Serverless Function** with near-instant cold starts (~160ms) and warm responses under 10ms.
+
+### 1. Architecture & Cold Start Optimization
+
+```
+Client (Web / Desktop) ──► Vercel Edge Router (https://your-api.vercel.app)
+                                 │
+                                 ▼ vercel.json rewrite
+                     Serverless Function (`api/index.ts`)
+                                 │
+                    ┌────────────┴────────────┐
+                    ▼                         ▼
+             Warm Invocation            Cold Start
+           (Reuses cachedServer)    (bootstraps NestJS in ~160ms)
+                    │                         │
+                    └────────────┬────────────┘
+                                 ▼
+                     ExpressAdapter + AppModule
+                                 │ Prisma ORM
+                                 ▼
+                 Managed PostgreSQL (Neon / Supabase)
+```
+
+- **Module-Level Server Caching**: `api/index.ts` caches the initialized `ExpressAdapter` across warm invocations. After the initial cold start, subsequent requests execute in single-digit milliseconds.
+- **Memory & Timeout Allocation**: `vercel.json` allocates `1024MB` RAM and a `30s` maximum duration, giving optimal CPU share to the Argon2id hashing engine.
+- **Binary Targets**: `prisma/schema.prisma` includes `rhel-openssl-1.0.x`, `rhel-openssl-3.0.x`, and `debian-openssl-3.0.x` to guarantee binary compatibility across AWS Lambda / Amazon Linux runtimes.
+- **Automatic Prisma Generation**: `package.json` defines `"postinstall": "prisma generate"` so Prisma Client is generated automatically during Vercel's build phase.
+
+### 2. Deploying via Vercel CLI or Dashboard
+
+#### Option A: Vercel CLI (Fastest)
+
+1. Install the Vercel CLI:
+   ```bash
+   npm install -g vercel
+   ```
+
+2. Link and deploy from the `meeting-recorder-api` directory:
+   ```bash
+   cd /home/khizaruddin/practice/fullapp/meeting-recorder-api
+   vercel
+   ```
+
+3. Deploy to production:
+   ```bash
+   vercel --prod
+   ```
+
+#### Option B: Vercel Dashboard (Git Integration)
+
+1. Push your repository to GitHub, GitLab, or Bitbucket.
+2. In the [Vercel Dashboard](https://vercel.com/dashboard), click **Add New... > Project**.
+3. Import your repository and select the **Root Directory** as `meeting-recorder-api`.
+4. Vercel automatically detects the build command (`npm run vercel-build`) and output configuration from `vercel.json`.
+
+### 3. Vercel Environment Variables
+
+Configure the following environment variables in your Vercel Project Settings (**Settings > Environment Variables**):
+
+| Variable | Environment | Example Value | Description |
+| :--- | :--- | :--- | :--- |
+| `NODE_ENV` | Production | `production` | Enables production optimizations. |
+| `DATABASE_URL` | Production / Preview | `postgresql://user:pass@ep-xyz.us-east-1.neon.tech/neondb?sslmode=require&pgbouncer=true&connection_limit=5` | Connection string to hosted PostgreSQL. |
+| `JWT_ACCESS_SECRET` | Production / Preview | `your-32-char-random-access-secret` | 15m access token secret. |
+| `JWT_REFRESH_SECRET` | Production / Preview | `your-32-char-random-refresh-secret` | 30d refresh token secret. |
+| `OFFLINE_ENTITLEMENT_SECRET` | Production / Preview | `your-32-char-random-hmac-secret` | Cryptographic offline license secret. |
+| `FRONTEND_URL` | Production / Preview | `https://your-web-app.vercel.app` | Allowed CORS origin for web portal. |
+| `STRIPE_SECRET_KEY` | Production / Preview | `sk_live_...` or `sk_test_...` | Stripe secret key. |
+| `STRIPE_WEBHOOK_SECRET`| Production / Preview | `whsec_...` | Stripe webhook signing secret. |
+| `ADMIN_SEED_ENABLED` | Production | `false` | Disables automatic admin creation in production. |
+
+### 4. Database Connection Pooling
+
+Serverless environments create multiple ephemeral container instances. To prevent PostgreSQL connection starvation:
+- Use a connection pooler such as **Neon Connection Pooling**, **Supabase Transaction Pooler (port 6543)**, or **AWS RDS Proxy**.
+- Append `?pgbouncer=true&connection_limit=5` to your `DATABASE_URL`.
+- Push your schema to the remote database prior to the first production deploy:
+  ```bash
+  DATABASE_URL="your-production-db-url" npx prisma db push
+  DATABASE_URL="your-production-db-url" npm run prisma:seed
+  ```
 
 ---
 

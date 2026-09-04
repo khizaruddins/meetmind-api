@@ -10,6 +10,18 @@ import { RequirePermissions } from '../common/decorators/permissions.decorator';
 export class HealthController {
   constructor(private readonly healthService: HealthService) {}
 
+  @Get(['', 'api'])
+  @ApiOperation({ summary: 'API root welcome endpoint' })
+  async root() {
+    return {
+      name: 'Meeting Recorder SaaS API',
+      version: '1.0.0',
+      status: 'HEALTHY',
+      docs: '/api/docs',
+      timestamp: new Date().toISOString(),
+    };
+  }
+
   @Get('health')
   @ApiOperation({ summary: 'Public general health probe' })
   async health() {
