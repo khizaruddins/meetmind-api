@@ -153,13 +153,13 @@ async function main() {
       description: '30-day trial with 30 minutes of recording per day',
       billingInterval: 'NONE',
       priceAmount: 0,
-      currency: 'USD',
+      currency: 'INR',
       trialDays: 30,
       dailyRecordingLimitSeconds: 1800,
       active: true,
       sortOrder: 1,
     },
-    update: { dailyRecordingLimitSeconds: 1800, trialDays: 30 },
+    update: { dailyRecordingLimitSeconds: 1800, trialDays: 30, currency: 'INR', priceAmount: 0 },
   });
 
   const silverPlan = await prisma.plan.upsert({
@@ -169,14 +169,14 @@ async function main() {
       name: 'Silver Plan',
       description: 'Unlimited local recording, Google Meet automation, and hardware encoding',
       billingInterval: 'MONTHLY',
-      priceAmount: 1900, // $19.00
-      currency: 'USD',
+      priceAmount: 54900, // ₹549.00
+      currency: 'INR',
       trialDays: 0,
       dailyRecordingLimitSeconds: 0,
       active: true,
       sortOrder: 2,
     },
-    update: { priceAmount: 1900 },
+    update: { priceAmount: 54900, currency: 'INR' },
   });
 
   const goldPlan = await prisma.plan.upsert({
@@ -186,14 +186,14 @@ async function main() {
       name: 'Gold Plan',
       description: 'Everything in Silver + modeled entitlements for future AI meeting intelligence and transcription',
       billingInterval: 'MONTHLY',
-      priceAmount: 3900, // $39.00
-      currency: 'USD',
+      priceAmount: 124900, // ₹1,249.00
+      currency: 'INR',
       trialDays: 0,
       dailyRecordingLimitSeconds: 0,
       active: true,
       sortOrder: 3,
     },
-    update: { priceAmount: 3900 },
+    update: { priceAmount: 124900, currency: 'INR' },
   });
 
   const coreFeatures = [

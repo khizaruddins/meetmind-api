@@ -143,7 +143,11 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current authenticated user info' })
   async getMe(@CurrentUser() user: any) {
-    return this.authService.getMe(user.id);
+    const userData = await this.authService.getMe(user.id);
+    return {
+      user: userData,
+      ...userData,
+    };
   }
 
   @Get('oauth/google/start')

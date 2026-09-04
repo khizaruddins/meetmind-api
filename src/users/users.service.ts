@@ -25,7 +25,11 @@ export class UsersService {
     }
 
     const { passwordHash, ...sanitized } = user;
-    return sanitized;
+    return {
+      user: sanitized,
+      profile: sanitized.profile,
+      ...sanitized,
+    };
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto) {
