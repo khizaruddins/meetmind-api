@@ -1,0 +1,473 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  passwordHash   String    @map("password_hash")
+  firstName      String?   @map("first_name")
+  lastName       String?   @map("last_name")
+  displayName    String?   @map("display_name")
+  emailVerified  Boolean   @default(false) @map("email_verified")
+  status         String    @default("ACTIVE") // ACTIVE, DISABLED, PENDING_DELETION
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  profile               UserProfile?
+  sessions              Session[]
+  devices               Device[]
+  subscriptions         Subscription[]
+  trial                 Trial?
+  dailyUsages           DailyUsage[]
+  recordingSessions     RecordingSession[]
+  recordingUsageEvents  RecordingUsageEvent[]
+  paymentCustomer       PaymentCustomer?
+  payments              Payment[]
+  invoices              Invoice[]
+  paymentMethods        PaymentMethod[]
+  entitlementSnapshots  EntitlementSnapshot[]
+  notifications         Notification[]
+  adminNotes            AdminNote[]
+  emailVerificationTokens EmailVerificationToken[]
+
+  @@map("users")
+}
+
+model UserProfile {
+  id          String   @id @default(uuid())
+  userId      String   @unique @map("user_id")
+  timezone    String   @default("UTC")
+  country     String?
+  language    String   @default("en")
+  avatarUrl   String?  @map("avatar_url")
+  preferences Json     @default("{}")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+model Session {
+  id             String    @id @default(uuid())
+  userId         String    @map("user_id")
+  tokenHash      String    @unique @map("token_hash")
+  ipAddress      String?   @map("ip_address")
+  userAgent      String?   @map("user_agent")
+  lastActivityAt DateTime  @default(now()) @map("last_activity_at")
+  expiresAt      DateTime  @map("expires_at")
+  revokedAt      DateTime? @map("revoked_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model AdminUser {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  name         String
+  status       String    @default("ACTIVE") // ACTIVE, DISABLED
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  adminUserRoles AdminUserRole[]
+  adminNotes     AdminNote[]
+
+  @@map("admin_users")
+}
+
+model Role {
+  id          String @id @default(uuid())
+  name        String @unique // SUPER_ADMIN, SUPPORT_ADMIN, BILLING_ADMIN, ANALYTICS_ADMIN, READ_ONLY_ADMIN
+  description String
+
+  adminUserRoles  AdminUserRole[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String @id @default(uuid())
+  key         String @unique // users.read, users.write, plans.write, trial.extend, etc.
+  description String
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model AdminUserRole {
+  adminUserId String @map("admin_user_id")
+  roleId      String @map("role_id")
+
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  role      Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([adminUserId, roleId])
+  @@map("admin_user_roles")
+}
+
+model RolePermission {
+  roleId       String @map("role_id")
+  permissionId String @map("permission_id")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Device {
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  installationId  String   @map("installation_id")
+  deviceName      String   @map("device_name")
+  platform        String
+  platformVersion String?  @map("platform_version")
+  appVersion      String?  @map("app_version")
+  lastSeenAt      DateTime @default(now()) @map("last_seen_at")
+  status          String   @default("ACTIVE") // ACTIVE, REVOKED
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, installationId])
+  @@map("devices")
+}
+
+model Plan {
+  id                         String   @id @default(uuid())
+  code                       String   @unique // TRIAL, SILVER, GOLD
+  name                       String
+  description                String
+  billingInterval            String   @default("MONTHLY") @map("billing_interval") // MONTHLY, YEARLY, NONE
+  priceAmount                Int      @default(0) @map("price_amount") // In cents (USD)
+  currency                   String   @default("USD")
+  trialDays                  Int      @default(0) @map("trial_days")
+  dailyRecordingLimitSeconds Int      @default(0) @map("daily_recording_limit_seconds") // 1800 for trial, 0 for unlimited
+  active                     Boolean  @default(true)
+  sortOrder                  Int      @default(0) @map("sort_order")
+  createdAt                  DateTime @default(now()) @map("created_at")
+  updatedAt                  DateTime @updatedAt @map("updated_at")
+
+  planFeatures  PlanFeature[]
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model PlanFeature {
+  id         String  @id @default(uuid())
+  planId     String  @map("plan_id")
+  featureKey String  @map("feature_key")
+  enabled    Boolean @default(false)
+  limitValue Int?    @map("limit_value")
+
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, featureKey])
+  @@map("plan_features")
+}
+
+model Subscription {
+  id                     String    @id @default(uuid())
+  userId                 String    @map("user_id")
+  planId                 String    @map("plan_id")
+  provider               String    @default("dev") // stripe, dev
+  providerCustomerId     String?   @map("provider_customer_id")
+  providerSubscriptionId String?   @map("provider_subscription_id")
+  status                 String    @default("ACTIVE") // TRIAL, ACTIVE, PAST_DUE, CANCELLED, EXPIRED, INCOMPLETE
+  currentPeriodStart     DateTime  @default(now()) @map("current_period_start")
+  currentPeriodEnd       DateTime  @map("current_period_end")
+  cancelAtPeriodEnd      Boolean   @default(false) @map("cancel_at_period_end")
+  cancelledAt            DateTime? @map("cancelled_at")
+  trialStart             DateTime? @map("trial_start")
+  trialEnd               DateTime? @map("trial_end")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  user         User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan         Plan                  @relation(fields: [planId], references: [id], onDelete: Restrict)
+  histories    SubscriptionHistory[]
+  payments     Payment[]
+  invoices     Invoice[]
+
+  @@map("subscriptions")
+}
+
+model SubscriptionHistory {
+  id             String   @id @default(uuid())
+  subscriptionId String   @map("subscription_id")
+  oldPlanId      String?  @map("old_plan_id")
+  newPlanId      String?  @map("new_plan_id")
+  oldStatus      String?  @map("old_status")
+  newStatus      String   @map("new_status")
+  reason         String?
+  changedBy      String   @default("system") @map("changed_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@map("subscription_history")
+}
+
+model Trial {
+  id                String   @id @default(uuid())
+  userId            String   @unique @map("user_id")
+  startedAt         DateTime @default(now()) @map("started_at")
+  expiresAt         DateTime @map("expires_at")
+  status            String   @default("ACTIVE") // ACTIVE, EXPIRED
+  extendedDays      Int      @default(0) @map("extended_days")
+  extendedByAdminId String?  @map("extended_by_admin_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("trials")
+}
+
+model DailyUsage {
+  id                   String   @id @default(uuid())
+  userId               String   @map("user_id")
+  usageDate            String   @map("usage_date") // YYYY-MM-DD
+  recordingSeconds     Int      @default(0) @map("recording_seconds")
+  recordingCount       Int      @default(0) @map("recording_count")
+  transcriptionSeconds Int      @default(0) @map("transcription_seconds")
+  aiRequests           Int      @default(0) @map("ai_requests")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, usageDate])
+  @@map("daily_usage")
+}
+
+model RecordingSession {
+  id                String    @id @default(uuid())
+  userId            String    @map("user_id")
+  deviceId          String?   @map("device_id")
+  meetingPlatform   String    @default("manual") @map("meeting_platform") // google_meet, zoom, manual
+  meetingId         String?   @map("meeting_id")
+  meetingTitle      String?   @map("meeting_title")
+  startedAt         DateTime  @default(now()) @map("started_at")
+  endedAt           DateTime? @map("ended_at")
+  durationSeconds   Int       @default(0) @map("duration_seconds")
+  maxDurationSeconds Int?     @map("max_duration_seconds")
+  status            String    @default("ACTIVE") // ACTIVE, COMPLETED, FAILED, ABANDONED
+  authorizationType String    @default("TRIAL") @map("authorization_type") // TRIAL, SILVER, GOLD, OFFLINE_CACHE
+  autoStarted       Boolean   @default(false) @map("auto_started")
+  autoStopped       Boolean   @default(false) @map("auto_stopped")
+  captureSource     String?   @map("capture_source")
+  encoder           String?   @map("encoder")
+  lastHeartbeatAt   DateTime? @map("last_heartbeat_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  usageEvents RecordingUsageEvent[]
+
+  @@map("recording_sessions")
+}
+
+model RecordingUsageEvent {
+  id                 String   @id @default(uuid())
+  recordingSessionId String   @map("recording_session_id")
+  userId             String   @map("user_id")
+  secondsDelta       Int      @map("seconds_delta")
+  eventType          String   @map("event_type") // HEARTBEAT, COMPLETED, RESERVATION
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recordingSession RecordingSession @relation(fields: [recordingSessionId], references: [id], onDelete: Cascade)
+
+  @@map("recording_usage_events")
+}
+
+model PaymentCustomer {
+  id                 String   @id @default(uuid())
+  userId             String   @unique @map("user_id")
+  provider           String   @default("dev") // stripe, dev
+  providerCustomerId String   @map("provider_customer_id")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("payment_customers")
+}
+
+model Payment {
+  id                String   @id @default(uuid())
+  userId            String   @map("user_id")
+  subscriptionId    String?  @map("subscription_id")
+  providerPaymentId String?  @map("provider_payment_id")
+  amount            Int      @map("amount") // Cents
+  currency          String   @default("USD")
+  status            String   @default("SUCCEEDED") // SUCCEEDED, FAILED, PENDING, REFUNDED
+  failureReason     String?  @map("failure_reason")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@map("payments")
+}
+
+model Invoice {
+  id                String   @id @default(uuid())
+  userId            String   @map("user_id")
+  subscriptionId    String?  @map("subscription_id")
+  providerInvoiceId String?  @map("provider_invoice_id")
+  invoiceNumber     String   @unique @map("invoice_number")
+  amountDue         Int      @map("amount_due")
+  amountPaid        Int      @map("amount_paid")
+  currency          String   @default("USD")
+  status            String   @default("PAID") // PAID, OPEN, VOID, UNCOLLECTIBLE
+  invoiceUrl        String?  @map("invoice_url")
+  invoicePdfUrl     String?  @map("invoice_pdf_url")
+  periodStart       DateTime @map("period_start")
+  periodEnd         DateTime @map("period_end")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@map("invoices")
+}
+
+model PaymentMethod {
+  id                      String   @id @default(uuid())
+  userId                  String   @map("user_id")
+  providerPaymentMethodId String   @map("provider_payment_method_id")
+  brand                   String   // visa, mastercard, amex
+  last4                   String
+  expMonth                Int      @map("exp_month")
+  expYear                 Int      @map("exp_year")
+  isDefault               Boolean  @default(false) @map("is_default")
+  createdAt               DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("payment_methods")
+}
+
+model WebhookEvent {
+  id              String    @id @default(uuid())
+  provider        String    // stripe, dev
+  providerEventId String    @unique @map("provider_event_id")
+  eventType       String    @map("event_type")
+  payloadHash     String    @map("payload_hash")
+  processed       Boolean   @default(false)
+  processedAt     DateTime? @map("processed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  @@map("webhook_events")
+}
+
+model EntitlementSnapshot {
+  id               String   @id @default(uuid())
+  userId           String   @map("user_id")
+  planCode         String   @map("plan_code")
+  featuresJson     Json     @map("features_json")
+  usageLimitsJson  Json     @map("usage_limits_json")
+  issuedAt         DateTime @default(now()) @map("issued_at")
+  expiresAt        DateTime @map("expires_at")
+  signatureVersion String   @default("v1") @map("signature_version")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("entitlement_snapshots")
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  actorType    String   @map("actor_type") // ADMIN, USER, SYSTEM
+  actorId      String   @map("actor_id")
+  action       String
+  entityType   String   @map("entity_type") // USER, SUBSCRIPTION, PLAN, TRIAL
+  entityId     String?  @map("entity_id")
+  metadataJson Json?    @map("metadata_json")
+  ipAddress    String?  @map("ip_address")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+model SystemEvent {
+  id           String   @id @default(uuid())
+  type         String
+  severity     String   @default("INFO") // INFO, WARN, ERROR
+  message      String
+  metadataJson Json?    @map("metadata_json")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("system_events")
+}
+
+model ApiHealthCheck {
+  id        String   @id @default(uuid())
+  service   String   // database, billing, queue, email, storage
+  status    String   // HEALTHY, DEGRADED, UNHEALTHY
+  latencyMs Int      @map("latency_ms")
+  checkedAt DateTime @default(now()) @map("checked_at")
+
+  @@map("api_health_checks")
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  type      String
+  title     String
+  message   String
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model AdminNote {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  adminUserId String   @map("admin_user_id")
+  note        String
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  @@map("admin_notes")
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("email_verification_tokens")
+}
+
