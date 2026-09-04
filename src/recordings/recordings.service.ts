@@ -304,26 +304,34 @@ export class RecordingsService {
       }),
     ]);
 
-    return paginate(
-      sessions.map((s) => ({
-        id: s.id,
-        meetingTitle: s.meetingTitle,
-        meetingPlatform: s.meetingPlatform,
-        meetingId: s.meetingId,
-        startedAt: s.startedAt,
-        endedAt: s.endedAt,
-        durationSeconds: s.durationSeconds,
-        durationMinutes: Math.round((s.durationSeconds / 60) * 10) / 10,
-        status: s.status,
-        authorizationType: s.authorizationType,
-        autoStarted: s.autoStarted,
-        autoStopped: s.autoStopped,
-        deviceId: s.deviceId,
-      })),
+    const mapped = sessions.map((s) => ({
+      id: s.id,
+      title: s.meetingTitle,
+      meetingTitle: s.meetingTitle,
+      platform: s.meetingPlatform,
+      meetingPlatform: s.meetingPlatform,
+      meetingId: s.meetingId,
+      startedAt: s.startedAt,
+      createdAt: s.startedAt,
+      endedAt: s.endedAt,
+      durationSeconds: s.durationSeconds,
+      durationMinutes: Math.round((s.durationSeconds / 60) * 10) / 10,
+      status: s.status,
+      authorizationType: s.authorizationType,
+      autoStarted: s.autoStarted,
+      autoStopped: s.autoStopped,
+      captureMode: s.autoStarted ? 'Auto' : 'Manual',
+      deviceId: s.deviceId,
+      deviceName: 'Desktop App',
+    }));
+
+    const paginated = paginate(mapped, total, page, limit);
+
+    return {
+      ...paginated,
+      recordings: paginated.data,
       total,
-      page,
-      limit,
-    );
+    };
   }
 
   async getRecording(userId: string, id: string) {
