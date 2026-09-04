@@ -69,6 +69,24 @@ export function configureApp(app: INestApplication) {
   app.useGlobalInterceptors(new RequestIdInterceptor());
   app.useGlobalFilters(new HttpExceptionFilter());
 
+  // Proxy/redirect Swagger UI static assets to CDN for serverless hosting (Vercel)
+  app.use((req: any, res: any, next: any) => {
+    const url = req.originalUrl || req.url || '';
+    if (url.includes('swagger-ui.css')) {
+      return res.redirect(302, 'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.18.2/swagger-ui.min.css');
+    }
+    if (url.includes('swagger-ui-bundle.js')) {
+      return res.redirect(302, 'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.18.2/swagger-ui-bundle.js');
+    }
+    if (url.includes('swagger-ui-standalone-preset.js')) {
+      return res.redirect(302, 'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.18.2/swagger-ui-standalone-preset.js');
+    }
+    if (url.includes('favicon-32x32.png') || url.includes('favicon-16x16.png')) {
+      return res.redirect(302, 'https://swagger.io/favicon.png');
+    }
+    next();
+  });
+
   // Swagger / OpenAPI setup
   const config = new DocumentBuilder()
     .setTitle('Meeting Recorder SaaS API')
@@ -78,5 +96,15 @@ export function configureApp(app: INestApplication) {
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  SwaggerModule.setup('api/docs', app, document, {
+    customCssUrl: [
+      'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.18.2/swagger-ui.min.css',
+    ],
+    customJs: [
+      'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.18.2/swagger-ui-bundle.js',
+      'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.18.2/swagger-ui-standalone-preset.js',
+    ],
+    customSiteTitle: 'Meeting Recorder SaaS API Docs',
+    customfavIcon: 'https://swagger.io/favicon.png',
+  });
 }
