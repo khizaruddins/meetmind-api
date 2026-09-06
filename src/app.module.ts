@@ -40,6 +40,8 @@ import { BillingService } from './billing/billing.service';
 import { SubscriptionController } from './billing/subscription.controller';
 import { PaymentsController } from './billing/payments.controller';
 import { InvoicesController } from './billing/invoices.controller';
+import { PublicInvoicesController } from './billing/public-invoices.controller';
+import { InvoicePdfService } from './billing/invoice-pdf.service';
 import { PaymentMethodsController } from './billing/payment-methods.controller';
 import { WebhooksService } from './webhooks/webhooks.service';
 import { WebhooksController } from './webhooks/webhooks.controller';
@@ -98,6 +100,7 @@ import { HealthController } from './health/health.controller';
     SubscriptionController,
     PaymentsController,
     InvoicesController,
+    PublicInvoicesController,
     PaymentMethodsController,
     WebhooksController,
     DashboardController,
@@ -135,6 +138,7 @@ import { HealthController } from './health/health.controller';
     StripeBillingProvider,
     RazorpayBillingProvider,
     BillingService,
+    InvoicePdfService,
     WebhooksService,
     DashboardService,
     AdminAuthService,

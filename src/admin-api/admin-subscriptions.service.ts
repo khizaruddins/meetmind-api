@@ -136,6 +136,24 @@ export class AdminSubscriptionsService {
       include: { plan: true },
     });
 
+    if (plan.code === 'TRIAL') {
+      const trialDays = plan.trialDays || 30;
+      const expiresAt = new Date(Date.now() + trialDays * 86400 * 1000);
+      await this.prisma.trial.upsert({
+        where: { userId: sub.userId },
+        create: {
+          userId: sub.userId,
+          status: 'ACTIVE',
+          startedAt: new Date(),
+          expiresAt,
+        },
+        update: {
+          status: 'ACTIVE',
+          expiresAt,
+        },
+      });
+    }
+
     await this.prisma.subscriptionHistory.create({
       data: {
         subscriptionId: id,

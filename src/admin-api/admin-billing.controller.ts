@@ -1,6 +1,8 @@
-import { Controller, Get, HttpCode, HttpStatus, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Response } from 'express';
 import { AdminBillingService } from './admin-billing.service';
+import { InvoicePdfService } from '../billing/invoice-pdf.service';
 import { AdminJwtAuthGuard } from '../common/guards/admin-jwt.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
@@ -12,7 +14,10 @@ import { PaginationQueryDto } from '../common/dto/pagination.dto';
 @UseGuards(AdminJwtAuthGuard, PermissionsGuard)
 @ApiBearerAuth()
 export class AdminBillingController {
-  constructor(private readonly adminBillingService: AdminBillingService) {}
+  constructor(
+    private readonly adminBillingService: AdminBillingService,
+    private readonly invoicePdfService: InvoicePdfService,
+  ) {}
 
   @Get('payments')
   @RequirePermissions('payments.read')
@@ -42,6 +47,27 @@ export class AdminBillingController {
     return this.adminBillingService.getInvoice(id);
   }
 
+  @Get('invoices/:id/pdf')
+  @RequirePermissions('invoices.read')
+  @ApiOperation({ summary: 'Generate and download official PDF tax invoice for admin' })
+  async downloadInvoicePdf(
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    const invoice = await this.adminBillingService.getInvoice(id);
+    const pdfBuffer = await this.invoicePdfService.generateInvoicePdf(invoice as any);
+
+    const safeFilename = `Invoice-${invoice.invoiceNumber || id}.pdf`;
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${safeFilename}"`,
+      'Content-Length': pdfBuffer.length,
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+    });
+
+    res.send(pdfBuffer);
+  }
+
   @Post('invoices/:id/retry-payment')
   @HttpCode(HttpStatus.OK)
   @RequirePermissions('billing.read')
@@ -62,7 +88,11 @@ export class AdminBillingController {
   @HttpCode(HttpStatus.OK)
   @RequirePermissions('billing.read')
   @ApiOperation({ summary: 'Resend invoice email to customer' })
-  async sendInvoice(@Param('id') id: string, @CurrentAdmin() admin: any) {
-    return this.adminBillingService.sendInvoice(id, admin.id);
+  async sendInvoice(
+    @Param('id') id: string,
+    @CurrentAdmin() admin: any,
+    @Body('recipientEmail') recipientEmail?: string,
+  ) {
+    return this.adminBillingService.sendInvoice(id, admin.id, recipientEmail);
   }
 }

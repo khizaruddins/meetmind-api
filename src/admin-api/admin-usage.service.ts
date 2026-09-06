@@ -7,50 +7,147 @@ export class AdminUsageService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getUsageSummary() {
-    const [totalRecordings, totalSecondsStats, activeUsersToday, sessionsToday, platformBreakdown, planUsageBreakdown] =
-      await Promise.all([
-        this.prisma.recordingSession.count(),
-        this.prisma.recordingSession.aggregate({
-          _sum: { durationSeconds: true },
-          _avg: { durationSeconds: true },
-        }),
-        this.prisma.dailyUsage.count({
-          where: { usageDate: new Date().toISOString().split('T')[0], recordingCount: { gt: 0 } },
-        }),
-        this.prisma.recordingSession.count({
-          where: { startedAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } },
-        }),
-        this.prisma.recordingSession.groupBy({
-          by: ['meetingPlatform'],
-          _count: { id: true },
-          _sum: { durationSeconds: true },
-        }),
-        this.prisma.recordingSession.groupBy({
-          by: ['authorizationType'],
-          _count: { id: true },
-          _sum: { durationSeconds: true },
-        }),
-      ]);
+    const [
+      totalRecordings,
+      totalSecondsStats,
+      activeUsersToday,
+      sessionsToday,
+      autoStartedCount,
+      devices,
+      planUsageBreakdown,
+      crashes,
+    ] = await Promise.all([
+      this.prisma.recordingSession.count(),
+      this.prisma.recordingSession.aggregate({
+        _sum: { durationSeconds: true },
+        _avg: { durationSeconds: true },
+      }),
+      this.prisma.dailyUsage.count({
+        where: { usageDate: new Date().toISOString().split('T')[0], recordingCount: { gt: 0 } },
+      }),
+      this.prisma.recordingSession.count({
+        where: { startedAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } },
+      }),
+      this.prisma.recordingSession.count({
+        where: { autoStarted: true },
+      }),
+      this.prisma.device.findMany({
+        select: { platform: true, userId: true },
+      }),
+      this.prisma.recordingSession.groupBy({
+        by: ['authorizationType'],
+        _count: { id: true },
+        _sum: { durationSeconds: true },
+      }),
+      this.prisma.recordingSession.findMany({
+        where: { status: { in: ['ABANDONED', 'FAILED'] } },
+        include: {
+          user: { select: { id: true, email: true, displayName: true } },
+        },
+        orderBy: { startedAt: 'desc' },
+        take: 10,
+      }),
+    ]);
 
     const totalSeconds = totalSecondsStats._sum.durationSeconds || 0;
-    const avgDuration = Math.round(totalSecondsStats._avg.durationSeconds || 0);
+    const avgSeconds = totalRecordings > 0 ? Math.round(totalSeconds / totalRecordings) : 0;
+    const avgDurationMinutes = Math.round((avgSeconds / 60) * 10) / 10;
+    const totalMinutes = Math.round((totalSeconds / 60) * 10) / 10;
+    const autoDetectionRate =
+      totalRecordings > 0 ? Math.round((autoStartedCount / totalRecordings) * 1000) / 10 : 0;
+
+    // Real OS breakdown
+    const osMap: Record<string, Set<string>> = {
+      Windows: new Set(),
+      macOS: new Set(),
+      Linux: new Set(),
+    };
+    for (const d of devices) {
+      const p = (d.platform || '').toLowerCase();
+      if (p.includes('win')) osMap.Windows.add(d.userId);
+      else if (p.includes('mac') || p.includes('darwin')) osMap.macOS.add(d.userId);
+      else if (p.includes('linux')) osMap.Linux.add(d.userId);
+      else osMap.Windows.add(d.userId);
+    }
+    const totalOsCount = Math.max(1, osMap.Windows.size + osMap.macOS.size + osMap.Linux.size);
+    const osBreakdown = [
+      {
+        name: 'Windows 10 / 11 (WASAPI + WGC)',
+        os: 'Windows',
+        count: osMap.Windows.size,
+        percentage: Math.round((osMap.Windows.size / totalOsCount) * 100),
+      },
+      {
+        name: 'macOS (ScreenCaptureKit)',
+        os: 'macOS',
+        count: osMap.macOS.size,
+        percentage: Math.round((osMap.macOS.size / totalOsCount) * 100),
+      },
+      {
+        name: 'Linux (PipeWire / X11)',
+        os: 'Linux',
+        count: osMap.Linux.size,
+        percentage: Math.round((osMap.Linux.size / totalOsCount) * 100),
+      },
+    ];
+
+    // Real Tier breakdown
+    const tierMap: Record<string, { count: number; seconds: number }> = {};
+    for (const u of planUsageBreakdown) {
+      tierMap[u.authorizationType] = {
+        count: u._count.id,
+        seconds: u._sum.durationSeconds || 0,
+      };
+    }
+    const totalTierSeconds = Math.max(1, totalSeconds);
+    const tierBreakdown = [
+      {
+        tier: 'Trial Tier (30 min/day limit)',
+        code: 'TRIAL',
+        count: tierMap['TRIAL']?.count || 0,
+        percentage: Math.round(((tierMap['TRIAL']?.seconds || 0) / totalTierSeconds) * 100),
+      },
+      {
+        tier: 'Silver Plan (Unlimited)',
+        code: 'SILVER',
+        count: tierMap['SILVER']?.count || 0,
+        percentage: Math.round(((tierMap['SILVER']?.seconds || 0) / totalTierSeconds) * 100),
+      },
+      {
+        tier: 'Gold Plan (AI Intelligence)',
+        code: 'GOLD',
+        count: tierMap['GOLD']?.count || 0,
+        percentage: Math.round(((tierMap['GOLD']?.seconds || 0) / totalTierSeconds) * 100),
+      },
+      {
+        tier: 'Enterprise Plan',
+        code: 'ENTERPRISE',
+        count: tierMap['ENTERPRISE']?.count || 0,
+        percentage: Math.round(((tierMap['ENTERPRISE']?.seconds || 0) / totalTierSeconds) * 100),
+      },
+    ];
 
     return {
       totalRecordings,
+      totalMinutes,
+      totalRecordingMinutes: totalMinutes,
       totalRecordingSeconds: totalSeconds,
-      totalRecordingMinutes: Math.round((totalSeconds / 60) * 10) / 10,
-      averageRecordingDurationSeconds: avgDuration,
+      averageDurationMinutes: avgDurationMinutes,
+      averageRecordingDurationSeconds: avgSeconds,
+      autoDetectionRate,
+      autoDetectionRatePercent: autoDetectionRate,
       activeRecordingUsersToday: activeUsersToday,
       recordingsToday: sessionsToday,
-      recordingsByPlatform: platformBreakdown.map((p) => ({
-        platform: p.meetingPlatform,
-        count: p._count.id,
-        seconds: p._sum.durationSeconds || 0,
-      })),
-      usageByPlan: planUsageBreakdown.map((u) => ({
-        plan: u.authorizationType,
-        count: u._count.id,
-        seconds: u._sum.durationSeconds || 0,
+      osBreakdown,
+      tierBreakdown,
+      crashReports: crashes.map((c) => ({
+        id: c.id,
+        title: c.meetingTitle,
+        platform: c.meetingPlatform,
+        status: c.status,
+        startedAt: c.startedAt,
+        userEmail: c.user.email,
+        userName: c.user.displayName || c.user.email,
       })),
     };
   }

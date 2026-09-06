@@ -33,11 +33,19 @@ export class BillingService {
   }
 
   async getSubscription(userId: string) {
-    const sub = await this.prisma.subscription.findFirst({
-      where: { userId },
+    let sub = await this.prisma.subscription.findFirst({
+      where: { userId, status: 'ACTIVE' },
       include: { plan: true },
       orderBy: { createdAt: 'desc' },
     });
+
+    if (!sub) {
+      sub = await this.prisma.subscription.findFirst({
+        where: { userId },
+        include: { plan: true },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -120,10 +128,10 @@ export class BillingService {
     const plan = await this.prisma.plan.findUnique({
       where: { code: planCode.toUpperCase() },
     });
-    if (!plan || plan.code === 'TRIAL') {
+    if (!plan || plan.code === 'TRIAL' || plan.priceAmount <= 0) {
       throw new BadRequestException({
         code: 'INVALID_PLAN',
-        message: 'Can only subscribe to paid plans (SILVER or GOLD)',
+        message: 'Can only subscribe to active paid plans',
       });
     }
 
@@ -248,20 +256,20 @@ export class BillingService {
             code: 'TRIAL',
             name: 'Free Trial',
             priceAmount: 0,
-            currency: 'USD',
+            currency: 'INR',
           },
       targetPlan: {
         code: targetPlan.code,
         name: targetPlan.name,
         priceAmount: targetPlan.priceAmount,
-        currency: targetPlan.currency,
+        currency: targetPlan.currency || 'INR',
       },
       effectiveDate: now,
       estimatedProration: diff,
       estimatedAmountDue: diff,
       newPriceAmount: targetPlan.priceAmount,
       nextRenewalDate: renewalDate,
-      currency: targetPlan.currency || 'USD',
+      currency: targetPlan.currency || 'INR',
     };
   }
 
@@ -359,7 +367,7 @@ export class BillingService {
     return updatedSub;
   }
 
-  async cancelSubscription(userId: string, atPeriodEnd: boolean = true) {
+  async cancelSubscription(userId: string, atPeriodEnd: boolean = true, cancellationReason?: string) {
     const sub = await this.prisma.subscription.findFirst({
       where: { userId, status: 'ACTIVE' },
       include: { plan: true },
@@ -381,6 +389,12 @@ export class BillingService {
       include: { plan: true },
     });
 
+    const historyReason = cancellationReason
+      ? `Cancellation reason: ${cancellationReason} (${atPeriodEnd ? 'period end' : 'immediate'})`
+      : atPeriodEnd
+      ? 'Cancelled at period end'
+      : 'Cancelled immediately';
+
     await this.prisma.subscriptionHistory.create({
       data: {
         subscriptionId: sub.id,
@@ -388,7 +402,7 @@ export class BillingService {
         newPlanId: sub.planId,
         oldStatus: sub.status,
         newStatus: updated.status,
-        reason: atPeriodEnd ? 'Cancelled at period end' : 'Cancelled immediately',
+        reason: historyReason,
         changedBy: `user:${userId}`,
       },
     });
@@ -502,21 +516,175 @@ export class BillingService {
     return payment;
   }
 
+  private formatInvoice(invoice: any) {
+    const amountPaid = invoice.amountPaid || invoice.amountDue || 0;
+    const amountDue = invoice.amountDue || amountPaid;
+    const currency = (invoice.currency || 'INR').toUpperCase();
+    const planName =
+      invoice.subscription?.plan?.name ||
+      (invoice.invoiceNumber.includes('GOLD')
+        ? 'Gold Plan'
+        : invoice.invoiceNumber.includes('SILVER')
+        ? 'Silver Plan'
+        : 'Monthly Subscription');
+
+    const totalAmount = amountPaid / 100;
+
+    return {
+      ...invoice,
+      amount: amountPaid,
+      amountPaid,
+      amountDue,
+      planName,
+      taxDetails: {
+        taxableAmount: totalAmount,
+        totalTax: 0,
+        cgst: 0,
+        sgst: 0,
+        rate: 0,
+      },
+    };
+  }
+
   // Invoices
   async listInvoices(userId: string) {
-    const invoices = await this.prisma.invoice.findMany({
+    const rawInvoices = await this.prisma.invoice.findMany({
       where: { userId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            displayName: true,
+            firstName: true,
+            lastName: true,
+            profile: true,
+          },
+        },
+        subscription: {
+          include: {
+            plan: true,
+          },
+        },
+      },
       orderBy: { createdAt: 'desc' },
     });
+
+    const invoices = rawInvoices.map((inv) => this.formatInvoice(inv));
     return { invoices };
   }
 
   async getInvoice(userId: string, id: string) {
-    const invoice = await this.prisma.invoice.findFirst({
-      where: { id, userId },
+    const rawInvoice = await this.prisma.invoice.findFirst({
+      where: {
+        userId,
+        OR: [
+          { id },
+          { invoiceNumber: id },
+        ],
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            displayName: true,
+            firstName: true,
+            lastName: true,
+            profile: true,
+          },
+        },
+        subscription: {
+          include: {
+            plan: true,
+          },
+        },
+      },
     });
-    if (!invoice) throw new NotFoundException({ code: 'INVOICE_NOT_FOUND', message: 'Invoice not found' });
-    return invoice;
+
+    if (!rawInvoice) {
+      throw new NotFoundException({ code: 'INVOICE_NOT_FOUND', message: 'Invoice not found' });
+    }
+
+    return this.formatInvoice(rawInvoice);
+  }
+
+  async sendInvoiceEmail(userId: string, id: string, recipientEmail?: string) {
+    const invoice = await this.getInvoice(userId, id);
+    const targetEmail = recipientEmail || invoice.user?.email;
+    if (!targetEmail) {
+      throw new BadRequestException({ code: 'NO_EMAIL', message: 'No email address found for this user' });
+    }
+
+    await this.emailService.sendEmail({
+      to: targetEmail,
+      subject: `Your Invoice ${invoice.invoiceNumber} from Meeting Recorder`,
+      template: 'invoice-send',
+      context: {
+        invoiceNumber: invoice.invoiceNumber,
+        amountDue: invoice.amountDue,
+        currency: invoice.currency,
+        planName: invoice.planName,
+      },
+    });
+
+    return { success: true, message: `Invoice sent to ${targetEmail}` };
+  }
+
+  async getPublicInvoice(idOrNumber: string) {
+    const rawInvoice = await this.prisma.invoice.findFirst({
+      where: {
+        OR: [
+          { id: idOrNumber },
+          { invoiceNumber: idOrNumber },
+        ],
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            displayName: true,
+            firstName: true,
+            lastName: true,
+            profile: true,
+          },
+        },
+        subscription: {
+          include: {
+            plan: true,
+          },
+        },
+      },
+    });
+
+    if (!rawInvoice) {
+      throw new NotFoundException({ code: 'INVOICE_NOT_FOUND', message: 'Invoice not found' });
+    }
+
+    return this.formatInvoice(rawInvoice);
+  }
+
+  async sendPublicInvoiceEmail(idOrNumber: string, recipientEmail?: string) {
+    const invoice = await this.getPublicInvoice(idOrNumber);
+    const targetEmail = recipientEmail || invoice.user?.email;
+    if (!targetEmail) {
+      throw new BadRequestException({ code: 'NO_EMAIL', message: 'No email address found for this user' });
+    }
+
+    await this.emailService.sendEmail({
+      to: targetEmail,
+      subject: `Invoice ${invoice.invoiceNumber} from Meeting Recorder`,
+      template: 'invoice-send',
+      context: {
+        invoiceNumber: invoice.invoiceNumber,
+        amountDue: invoice.amountDue,
+        currency: invoice.currency,
+        planName: invoice.planName,
+      },
+    });
+
+    return { success: true, message: `Invoice sent to ${targetEmail}` };
   }
 
   // Payment Methods

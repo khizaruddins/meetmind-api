@@ -12,11 +12,16 @@ export class CustomerJwtAuthGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
     const authHeader = req.headers['authorization'];
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      throw new UnauthorizedException('Missing or invalid Authorization header');
+    let token: string | null = null;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7);
+    } else if (req.query?.token && typeof req.query.token === 'string') {
+      token = req.query.token;
     }
 
-    const token = authHeader.substring(7);
+    if (!token) {
+      throw new UnauthorizedException('Missing or invalid Authorization header');
+    }
     try {
       const payload = this.jwtService.verify(token, {
         secret: process.env.JWT_ACCESS_SECRET || 'dev-access-secret-meeting-recorder-saas-2026',

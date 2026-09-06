@@ -68,21 +68,86 @@ export class AdminAnalyticsService {
   }
 
   async getRevenueAnalytics() {
-    const payments = await this.prisma.payment.findMany({
-      where: { status: 'SUCCEEDED' },
-      select: { amount: true, currency: true, createdAt: true },
-    });
+    const [
+      payments,
+      activeSubs,
+      pastDueSubs,
+      totalDownloads,
+      convertedUsers,
+    ] = await Promise.all([
+      this.prisma.payment.findMany({
+        select: { amount: true, currency: true, status: true, createdAt: true },
+      }),
+      this.prisma.subscription.findMany({
+        where: { status: 'ACTIVE' },
+        include: { plan: true },
+      }),
+      this.prisma.subscription.findMany({
+        where: { status: 'PAST_DUE' },
+        include: { plan: true },
+      }),
+      this.prisma.user.count({ where: { trial: { isNot: null } } }),
+      this.prisma.user.count({
+        where: {
+          trial: { isNot: null },
+          subscriptions: { some: { status: 'ACTIVE', plan: { priceAmount: { gt: 0 } } } },
+        },
+      }),
+    ]);
 
-    const totalRevenueCents = payments.reduce((acc, p) => acc + p.amount, 0);
+    const succeededPayments = payments.filter((p) => p.status === 'SUCCEEDED');
+    const totalSettledPaise = succeededPayments.reduce((acc, p) => acc + p.amount, 0);
+    const totalSettled = totalSettledPaise / 100;
+
+    const chargeSuccessRate =
+      payments.length > 0
+        ? Math.round((succeededPayments.length / payments.length) * 1000) / 10
+        : 100;
+
+    const mrrPaise = activeSubs
+      .filter((s) => s.plan.priceAmount > 0)
+      .reduce((acc, s) => acc + s.plan.priceAmount, 0);
+    const mrr = mrrPaise / 100;
+
+    const silverSubs = activeSubs.filter((s) => s.plan.code === 'SILVER');
+    const silverMrr = silverSubs.reduce((acc, s) => acc + s.plan.priceAmount, 0) / 100;
+
+    const goldSubs = activeSubs.filter((s) => s.plan.code === 'GOLD');
+    const goldMrr = goldSubs.reduce((acc, s) => acc + s.plan.priceAmount, 0) / 100;
+
+    const enterpriseSubs = activeSubs.filter((s) => s.plan.code === 'ENTERPRISE');
+    const enterpriseMrr = enterpriseSubs.reduce((acc, s) => acc + s.plan.priceAmount, 0) / 100;
+
+    const pastDueAmount =
+      pastDueSubs.reduce((acc, s) => acc + s.plan.priceAmount, 0) / 100;
+
+    const conversionRate =
+      totalDownloads > 0 ? Math.round((convertedUsers / totalDownloads) * 1000) / 10 : 0;
+
     const monthlyRevenue: Record<string, number> = {};
-
-    for (const p of payments) {
+    for (const p of succeededPayments) {
       const month = p.createdAt.toISOString().substring(0, 7);
       monthlyRevenue[month] = (monthlyRevenue[month] || 0) + p.amount / 100;
     }
 
     return {
-      totalRevenue: totalRevenueCents / 100,
+      mrr,
+      totalRevenue: totalSettled,
+      totalSettled,
+      silverMrr,
+      silverSubscribers: silverSubs.length,
+      goldMrr,
+      goldSubscribers: goldSubs.length,
+      enterpriseMrr,
+      enterpriseSubscribers: enterpriseSubs.length,
+      pastDueAmount,
+      pastDueCount: pastDueSubs.length,
+      chargeSuccessRate,
+      totalDownloads,
+      convertedUsers,
+      conversionRate,
+      conversionRatePercent: conversionRate,
+      currency: 'INR',
       monthlyRevenue: Object.entries(monthlyRevenue).map(([month, amount]) => ({ month, amount })),
     };
   }

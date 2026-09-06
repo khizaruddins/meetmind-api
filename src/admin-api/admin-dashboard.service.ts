@@ -14,6 +14,8 @@ export class AdminDashboardService {
 
     const [
       totalUsers,
+      totalDownloads,
+      convertedUsers,
       activeUsersToday,
       activeUsersThisMonth,
       trialUsers,
@@ -33,8 +35,17 @@ export class AdminDashboardService {
       failedPayments,
       pendingPayments,
       activePaidSubs,
+      allPlans,
+      devices,
     ] = await Promise.all([
       this.prisma.user.count(),
+      this.prisma.user.count({ where: { trial: { isNot: null } } }),
+      this.prisma.user.count({
+        where: {
+          trial: { isNot: null },
+          subscriptions: { some: { status: 'ACTIVE', plan: { priceAmount: { gt: 0 } } } },
+        },
+      }),
       this.prisma.session.count({ where: { lastActivityAt: { gte: todayStart } } }),
       this.prisma.session.count({ where: { lastActivityAt: { gte: monthStart } } }),
       this.prisma.trial.count({ where: { status: 'ACTIVE', expiresAt: { gte: now } } }),
@@ -57,8 +68,20 @@ export class AdminDashboardService {
       this.prisma.payment.count({ where: { status: 'FAILED' } }),
       this.prisma.payment.count({ where: { status: 'PENDING' } }),
       this.prisma.subscription.findMany({
-        where: { status: 'ACTIVE', plan: { code: { in: ['SILVER', 'GOLD'] } } },
+        where: { status: 'ACTIVE', plan: { priceAmount: { gt: 0 } } },
         include: { plan: true },
+      }),
+      this.prisma.plan.findMany({
+        where: { active: true },
+        include: {
+          _count: {
+            select: { subscriptions: { where: { status: 'ACTIVE' } } },
+          },
+        },
+        orderBy: { priceAmount: 'asc' },
+      }),
+      this.prisma.device.findMany({
+        select: { platform: true, userId: true },
       }),
     ]);
 
@@ -72,23 +95,77 @@ export class AdminDashboardService {
 
     const avgRecordingDurationSeconds = Math.round(allRecordingsStats._avg.durationSeconds || 0);
 
-    const mrrCents = activePaidSubs.reduce((acc, s) => acc + s.plan.priceAmount, 0);
-    const mrr = mrrCents / 100;
+    const mrrPaise = activePaidSubs.reduce((acc, s) => acc + s.plan.priceAmount, 0);
+    const mrr = mrrPaise / 100;
 
-    const conversionRate = totalUsers > 0 ? Math.round((activePaidSubs.length / totalUsers) * 1000) / 10 : 0;
+    const conversionRate =
+      totalDownloads > 0 ? Math.round((convertedUsers / totalDownloads) * 1000) / 10 : 0;
+
+    // Real OS Breakdown by unique users and devices
+    const osMap: Record<string, Set<string>> = {
+      Windows: new Set(),
+      macOS: new Set(),
+      Linux: new Set(),
+    };
+    for (const d of devices) {
+      const p = (d.platform || '').toLowerCase();
+      if (p.includes('win')) osMap.Windows.add(d.userId);
+      else if (p.includes('mac') || p.includes('darwin')) osMap.macOS.add(d.userId);
+      else if (p.includes('linux')) osMap.Linux.add(d.userId);
+      else osMap.Windows.add(d.userId);
+    }
+    const totalOsCount = Math.max(1, osMap.Windows.size + osMap.macOS.size + osMap.Linux.size);
+    const osBreakdown = [
+      {
+        os: 'Windows',
+        count: osMap.Windows.size,
+        percentage: Math.round((osMap.Windows.size / totalOsCount) * 100),
+      },
+      {
+        os: 'macOS',
+        count: osMap.macOS.size,
+        percentage: Math.round((osMap.macOS.size / totalOsCount) * 100),
+      },
+      {
+        os: 'Linux',
+        count: osMap.Linux.size,
+        percentage: Math.round((osMap.Linux.size / totalOsCount) * 100),
+      },
+    ];
+
+    const planCards = allPlans.map((p) => ({
+      id: p.id,
+      code: p.code,
+      name: p.name,
+      priceAmount: p.priceAmount,
+      priceRupees: p.priceAmount / 100,
+      currency: 'INR',
+      activeSubscribers: p._count.subscriptions,
+      billingInterval: p.billingInterval,
+    }));
 
     return {
       totalUsers,
+      totalClients: totalUsers,
+      totalDownloads,
+      downloads: totalDownloads,
+      convertedUsers,
+      conversionRate,
+      conversionRatePercent: conversionRate,
       activeToday: activeUsersToday,
       activeUsersToday,
       activeThisMonth: activeUsersThisMonth,
       activeUsersThisMonth,
       trialUsers,
+      trialAccounts: trialUsers,
       silverUsers,
+      silverAccounts: silverUsers,
       goldUsers,
+      goldAccounts: goldUsers,
       expiredTrials,
       activeSubscriptions,
       pastDueSubscriptions,
+      pastDueCount: pastDueSubscriptions,
       cancelledSubscriptions,
       recordingsToday,
       recordingsThisMonth,
@@ -104,9 +181,13 @@ export class AdminDashboardService {
       trialConversionRate: conversionRate,
       mrr,
       monthlyRevenue: mrr,
+      currency: 'INR',
       failedPayments,
+      failedPaymentsCount: failedPayments,
       pendingPayments,
-      apiErrorRatePercent: 0.05, // Healthy low baseline
+      osBreakdown,
+      planCards,
+      apiErrorRatePercent: 0.05,
       currentServiceHealth: 'HEALTHY',
       overallSystemHealth: 'healthy',
     };

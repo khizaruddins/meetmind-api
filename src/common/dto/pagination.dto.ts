@@ -21,6 +21,14 @@ export class PaginationQueryDto {
 
 export interface PaginatedResult<T> {
   data: T[];
+  items: T[];
+  users: T[];
+  subscriptions: T[];
+  payments: T[];
+  invoices: T[];
+  recordings: T[];
+  logs: T[];
+  total: number;
   pagination: {
     page: number;
     limit: number;
@@ -32,6 +40,14 @@ export interface PaginatedResult<T> {
 export function paginate<T>(data: T[], total: number, page: number, limit: number): PaginatedResult<T> {
   return {
     data,
+    items: data,
+    users: data,
+    subscriptions: data,
+    payments: data,
+    invoices: data,
+    recordings: data,
+    logs: data,
+    total,
     pagination: {
       page,
       limit,

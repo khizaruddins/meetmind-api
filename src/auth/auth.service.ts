@@ -521,7 +521,6 @@ export class AuthService {
         subscriptions: {
           include: { plan: true },
           orderBy: { createdAt: 'desc' },
-          take: 1,
         },
         devices: {
           where: { status: 'ACTIVE' },

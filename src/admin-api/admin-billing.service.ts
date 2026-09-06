@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { EmailService } from '../email/email.service';
@@ -76,11 +76,16 @@ export class AdminBillingService {
     return paginate(items, total, page, limit);
   }
 
-  async getInvoice(id: string) {
-    const invoice = await this.prisma.invoice.findUnique({
-      where: { id },
+  async getInvoice(idOrNumber: string) {
+    const invoice = await this.prisma.invoice.findFirst({
+      where: {
+        OR: [
+          { id: idOrNumber },
+          { invoiceNumber: idOrNumber },
+        ],
+      },
       include: {
-        user: { select: { id: true, email: true, displayName: true } },
+        user: { select: { id: true, email: true, displayName: true, firstName: true, lastName: true } },
         subscription: { include: { plan: true } },
       },
     });
@@ -137,25 +142,34 @@ export class AdminBillingService {
     return updated;
   }
 
-  async sendInvoice(invoiceId: string, adminId: string) {
+  async sendInvoice(invoiceId: string, adminId: string, recipientEmail?: string) {
     const invoice = await this.getInvoice(invoiceId);
-    if (invoice.user) {
-      await this.emailService.sendEmail({
-        to: invoice.user.email,
-        subject: `Invoice ${invoice.invoiceNumber} from Meeting Recorder`,
-        template: 'invoice-send',
-        context: { invoiceNumber: invoice.invoiceNumber, amountDue: invoice.amountDue },
-      });
+    const targetEmail = recipientEmail || invoice.user?.email;
+    if (!targetEmail) {
+      throw new BadRequestException({ code: 'NO_EMAIL', message: 'No customer email found for this invoice' });
     }
+
+    await this.emailService.sendEmail({
+      to: targetEmail,
+      subject: `Invoice ${invoice.invoiceNumber} from Meeting Recorder`,
+      template: 'invoice-send',
+      context: {
+        invoiceNumber: invoice.invoiceNumber,
+        amountDue: invoice.amountDue,
+        currency: invoice.currency,
+        planName: invoice.subscription?.plan?.name || 'Subscription',
+      },
+    });
 
     await this.auditService.log({
       actorType: 'ADMIN',
       actorId: adminId,
       action: 'invoice.send',
       entityType: 'INVOICE',
-      entityId: invoiceId,
+      entityId: invoice.id,
+      metadataJson: { sentTo: targetEmail },
     });
 
-    return { success: true, message: `Invoice sent to ${invoice.user.email}` };
+    return { success: true, message: `Invoice sent to ${targetEmail}` };
   }
 }

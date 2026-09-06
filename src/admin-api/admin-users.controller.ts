@@ -213,4 +213,17 @@ export class AdminUsersController {
   ) {
     return this.adminUsersService.deleteNote(id, noteId, admin.id);
   }
+
+  @Post(':id/change-plan')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions('users.write')
+  @ApiOperation({ summary: 'Change customer subscription plan back to Trial or to Silver, Gold, Enterprise, etc.' })
+  async changePlan(
+    @Param('id') id: string,
+    @Body() body: { targetPlan?: string; planCode?: string; reason?: string },
+    @CurrentAdmin() admin: any,
+  ) {
+    const targetPlan = body.targetPlan || body.planCode;
+    return this.adminUsersService.changeUserPlan(id, targetPlan!, body.reason, admin.id);
+  }
 }

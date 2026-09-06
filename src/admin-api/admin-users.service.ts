@@ -50,12 +50,19 @@ export class AdminUsersService {
     }
 
     if (filter.plan) {
-      where.subscriptions = {
-        some: {
-          plan: { code: filter.plan.toUpperCase() },
-          status: 'ACTIVE',
-        },
-      };
+      if (filter.plan.toUpperCase() === 'TRIAL') {
+        where.OR = [
+          { trial: { status: 'ACTIVE' } },
+          { subscriptions: { some: { plan: { code: 'TRIAL' } } } },
+        ];
+      } else {
+        where.subscriptions = {
+          some: {
+            plan: { code: filter.plan.toUpperCase() },
+            status: 'ACTIVE',
+          },
+        };
+      }
     }
 
     if (filter.subscriptionStatus) {
@@ -79,6 +86,8 @@ export class AdminUsersService {
     if (filter.sort === 'name_asc') orderBy = { displayName: 'asc' };
     if (filter.sort === 'name_desc') orderBy = { displayName: 'desc' };
 
+    const todayStr = new Date().toISOString().split('T')[0];
+
     const [total, users] = await Promise.all([
       this.prisma.user.count({ where }),
       this.prisma.user.findMany({
@@ -88,13 +97,16 @@ export class AdminUsersService {
           trial: true,
           subscriptions: {
             include: { plan: true },
-            orderBy: { createdAt: 'desc' },
-            take: 1,
+            orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
           },
           devices: {
             where: { status: 'ACTIVE' },
             take: 1,
             orderBy: { lastSeenAt: 'desc' },
+          },
+          dailyUsages: {
+            where: { usageDate: todayStr },
+            take: 1,
           },
         },
         orderBy,
@@ -105,15 +117,48 @@ export class AdminUsersService {
 
     return paginate(
       users.map((u) => {
-        const activeSub = u.subscriptions[0];
-        const isPaid = activeSub && (activeSub.plan.code === 'SILVER' || activeSub.plan.code === 'GOLD');
-        const planCode = isPaid ? activeSub.plan.code : 'TRIAL';
-        const subStatus = isPaid ? activeSub.status : u.trial?.status === 'ACTIVE' ? 'TRIAL' : 'EXPIRED';
+        const todayUsage = u.dailyUsages?.[0];
+        const activePaidSub = u.subscriptions.find(
+          (s) => s.status === 'ACTIVE' && s.plan.code !== 'TRIAL' && s.plan.priceAmount > 0,
+        );
+        const anyActiveSub = u.subscriptions.find((s) => s.status === 'ACTIVE');
+        const latestSub = u.subscriptions[0];
+        const primarySub = activePaidSub || anyActiveSub || latestSub;
+        const isPaid =
+          primarySub &&
+          primarySub.status === 'ACTIVE' &&
+          primarySub.plan.code !== 'TRIAL' &&
+          primarySub.plan.priceAmount > 0;
+        const planCode = isPaid
+          ? primarySub.plan.code
+          : u.trial?.status === 'ACTIVE'
+            ? 'TRIAL'
+            : primarySub?.status === 'ACTIVE'
+              ? primarySub.plan.code
+              : 'TRIAL';
+        const subStatus = primarySub
+          ? primarySub.status
+          : u.trial?.status === 'ACTIVE'
+            ? 'TRIAL'
+            : 'EXPIRED';
+
+        const subsList = u.subscriptions.map((s) => ({
+          id: s.id,
+          plan: s.plan.code,
+          planName: s.plan.name,
+          priceAmount: s.plan.priceAmount,
+          currency: s.plan.currency || 'INR',
+          status: s.status,
+          currentPeriodStart: s.currentPeriodStart,
+          currentPeriodEnd: s.currentPeriodEnd,
+          cancelAtPeriodEnd: s.cancelAtPeriodEnd,
+        }));
 
         return {
           id: u.id,
           email: u.email,
-          displayName: u.displayName || `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email,
+          displayName:
+            u.displayName || `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email,
           firstName: u.firstName,
           lastName: u.lastName,
           emailVerified: u.emailVerified,
@@ -121,8 +166,13 @@ export class AdminUsersService {
           plan: planCode,
           subscriptionStatus: subStatus,
           trialExpiresAt: u.trial?.expiresAt,
+          trialStatus: u.trial?.status || 'NONE',
+          usageTodaySeconds: todayUsage?.recordingSeconds || 0,
+          subscriptions: subsList,
+          activeSubscriptionCount: u.subscriptions.filter((s) => s.status === 'ACTIVE').length,
           lastSeenDevice: u.devices[0]?.deviceName,
           lastSeenPlatform: u.devices[0]?.platform,
+          platform: u.devices[0]?.platform || 'web',
           createdAt: u.createdAt,
         };
       }),
@@ -433,7 +483,7 @@ export class AdminUsersService {
     for (const pay of user.payments) {
       events.push({
         type: pay.status === 'SUCCEEDED' ? 'PAYMENT_SUCCEEDED' : 'PAYMENT_FAILED',
-        title: `Payment of $${(pay.amount / 100).toFixed(2)} ${pay.status.toLowerCase()}`,
+        title: `Payment of ₹${(pay.amount / 100).toFixed(2)} ${pay.status.toLowerCase()}`,
         date: pay.createdAt,
       });
     }
@@ -476,8 +526,7 @@ export class AdminUsersService {
         trial: true,
         subscriptions: {
           include: { plan: true },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
+          orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
         },
         devices: { orderBy: { lastSeenAt: 'desc' }, take: 5 },
         sessions: {
@@ -510,8 +559,12 @@ export class AdminUsersService {
       }),
     ]);
 
-    const activeSub = user.subscriptions[0];
-    const isPaid = activeSub && (activeSub.plan.code === 'SILVER' || activeSub.plan.code === 'GOLD');
+    const activePaidSub = user.subscriptions.find(
+      (s) => s.status === 'ACTIVE' && s.plan.code !== 'TRIAL' && s.plan.priceAmount > 0,
+    );
+    const anyActiveSub = user.subscriptions.find((s) => s.status === 'ACTIVE');
+    const activeSub = activePaidSub || anyActiveSub || user.subscriptions[0];
+    const isPaid = activeSub && activeSub.plan.code !== 'TRIAL' && activeSub.plan.priceAmount > 0;
 
     const timeline = await this.getUserTimeline(id);
 
@@ -663,5 +716,138 @@ export class AdminUsersService {
     });
 
     return { success: true, message: 'Note deleted' };
+  }
+
+  async changeUserPlan(userId: string, targetPlan: string, reason: string | undefined, adminId: string) {
+    if (!reason || !reason.trim()) {
+      throw new BadRequestException({
+        code: 'REASON_REQUIRED',
+        message: 'A mandatory reason must be provided for administrative subscription mutations',
+      });
+    }
+
+    if (!targetPlan || !targetPlan.trim()) {
+      throw new BadRequestException({
+        code: 'TARGET_PLAN_REQUIRED',
+        message: 'A target plan must be selected',
+      });
+    }
+
+    const planCode = targetPlan.toUpperCase().trim();
+    const plan = await this.prisma.plan.findUnique({ where: { code: planCode } });
+    if (!plan) {
+      throw new NotFoundException({ code: 'PLAN_NOT_FOUND', message: `Plan ${targetPlan} not found` });
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        subscriptions: {
+          include: { plan: true },
+          orderBy: { createdAt: 'desc' },
+        },
+        trial: true,
+      },
+    });
+    if (!user) throw new NotFoundException({ code: 'USER_NOT_FOUND', message: 'User not found' });
+
+    if (planCode === 'TRIAL') {
+      // 1. Cancel / inactivate any active commercial subscriptions
+      await this.prisma.subscription.updateMany({
+        where: { userId, status: 'ACTIVE' },
+        data: { status: 'CANCELLED', cancelledAt: new Date() },
+      });
+
+      // 2. Reactivate / extend Trial
+      const trialDays = plan.trialDays || 30;
+      const expiresAt = new Date(Date.now() + trialDays * 86400 * 1000);
+      const trial = await this.prisma.trial.upsert({
+        where: { userId },
+        create: {
+          userId,
+          status: 'ACTIVE',
+          startedAt: new Date(),
+          expiresAt,
+          extendedDays: 0,
+        },
+        update: {
+          status: 'ACTIVE',
+          expiresAt,
+        },
+      });
+
+      await this.auditService.log({
+        actorType: 'ADMIN',
+        actorId: adminId,
+        action: 'user.change_plan',
+        entityType: 'USER',
+        entityId: userId,
+        metadataJson: { targetPlan: 'TRIAL', reason: reason.trim() },
+      });
+
+      return { success: true, message: 'User reverted to Trial plan successfully', planCode: 'TRIAL', trial };
+    } else {
+      // Commercial plan (SILVER, GOLD, ENTERPRISE, etc.)
+      const existingSub = user.subscriptions[0];
+      let sub;
+
+      if (existingSub) {
+        const oldPlanId = existingSub.planId;
+        const oldStatus = existingSub.status;
+        sub = await this.prisma.subscription.update({
+          where: { id: existingSub.id },
+          data: {
+            planId: plan.id,
+            status: 'ACTIVE',
+            cancelledAt: null,
+            cancelAtPeriodEnd: false,
+            currentPeriodStart: new Date(),
+            currentPeriodEnd: new Date(Date.now() + 30 * 86400 * 1000),
+          },
+          include: { plan: true },
+        });
+
+        await this.prisma.subscriptionHistory.create({
+          data: {
+            subscriptionId: existingSub.id,
+            oldPlanId,
+            newPlanId: plan.id,
+            oldStatus,
+            newStatus: 'ACTIVE',
+            reason: reason.trim(),
+            changedBy: `admin:${adminId}`,
+          },
+        });
+      } else {
+        const now = new Date();
+        sub = await this.prisma.subscription.create({
+          data: {
+            userId,
+            planId: plan.id,
+            provider: 'admin_assigned',
+            status: 'ACTIVE',
+            currentPeriodStart: now,
+            currentPeriodEnd: new Date(Date.now() + 30 * 86400 * 1000),
+          },
+          include: { plan: true },
+        });
+      }
+
+      await this.auditService.log({
+        actorType: 'ADMIN',
+        actorId: adminId,
+        action: 'user.change_plan',
+        entityType: 'USER',
+        entityId: userId,
+        metadataJson: { targetPlan: plan.code, reason: reason.trim() },
+      });
+
+      return {
+        success: true,
+        message: `User plan successfully set to ${plan.name}`,
+        planCode: plan.code,
+        subscription: sub,
+      };
+    }
   }
 }

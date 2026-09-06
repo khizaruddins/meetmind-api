@@ -95,8 +95,12 @@ export class SubscriptionController {
   @Post('cancel')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Cancel subscription (effective at end of billing cycle)' })
-  async cancel(@CurrentUser() user: any, @Body('atPeriodEnd') atPeriodEnd?: boolean) {
-    return this.billingService.cancelSubscription(user.id, atPeriodEnd ?? true);
+  async cancel(
+    @CurrentUser() user: any,
+    @Body('atPeriodEnd') atPeriodEnd?: boolean,
+    @Body('reason') reason?: string,
+  ) {
+    return this.billingService.cancelSubscription(user.id, atPeriodEnd ?? true, reason);
   }
 
   @Post('resume')
