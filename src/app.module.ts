@@ -35,6 +35,7 @@ import { RecordingsService } from './recordings/recordings.service';
 import { RecordingsController } from './recordings/recordings.controller';
 import { DevBillingProvider } from './billing/providers/dev-billing.provider';
 import { StripeBillingProvider } from './billing/providers/stripe-billing.provider';
+import { RazorpayBillingProvider } from './billing/providers/razorpay-billing.provider';
 import { BillingService } from './billing/billing.service';
 import { SubscriptionController } from './billing/subscription.controller';
 import { PaymentsController } from './billing/payments.controller';
@@ -132,6 +133,7 @@ import { HealthController } from './health/health.controller';
     RecordingsService,
     DevBillingProvider,
     StripeBillingProvider,
+    RazorpayBillingProvider,
     BillingService,
     WebhooksService,
     DashboardService,

@@ -34,7 +34,38 @@ export class SubscriptionController {
     @Body('successUrl') successUrl?: string,
     @Body('cancelUrl') cancelUrl?: string,
   ) {
-    return this.billingService.createCheckoutSession(user.id, planCode, successUrl, cancelUrl);
+    return this.billingService.createRazorpayPaymentLink(user.id, planCode, successUrl);
+  }
+
+  @Post('razorpay/payment-link')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Create dynamic Razorpay payment link for plan subscription' })
+  async createRazorpayPaymentLink(
+    @CurrentUser() user: any,
+    @Body('planCode') planCode: string,
+    @Body('callbackUrl') callbackUrl?: string,
+  ) {
+    return this.billingService.createRazorpayPaymentLink(user.id, planCode, callbackUrl);
+  }
+
+  @Post('razorpay/order')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Create Razorpay order for inline checkout popup' })
+  async createRazorpayOrder(
+    @CurrentUser() user: any,
+    @Body('planCode') planCode: string,
+  ) {
+    return this.billingService.createRazorpayOrder(user.id, planCode);
+  }
+
+  @Post('razorpay/verify')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify Razorpay payment and activate subscription plan' })
+  async verifyRazorpayPayment(
+    @CurrentUser() user: any,
+    @Body() data: any,
+  ) {
+    return this.billingService.verifyRazorpayPayment(user.id, data);
   }
 
   @Post('change-plan/preview')

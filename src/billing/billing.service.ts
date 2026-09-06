@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../common/prisma.service';
 import { DevBillingProvider } from './providers/dev-billing.provider';
 import { StripeBillingProvider } from './providers/stripe-billing.provider';
+import { RazorpayBillingProvider } from './providers/razorpay-billing.provider';
 import { BillingProvider } from './interfaces/billing-provider.interface';
 import { EmailService } from '../email/email.service';
 
@@ -17,13 +18,18 @@ export class BillingService {
     private readonly prisma: PrismaService,
     private readonly devProvider: DevBillingProvider,
     private readonly stripeProvider: StripeBillingProvider,
+    private readonly razorpayProvider: RazorpayBillingProvider,
     private readonly emailService: EmailService,
   ) {
-    this.provider = process.env.NODE_ENV === 'production' ? this.stripeProvider : this.devProvider;
+    this.provider = process.env.NODE_ENV === 'production' ? this.razorpayProvider : this.devProvider;
   }
 
   getProvider(): BillingProvider {
     return this.provider;
+  }
+
+  getRazorpayProvider(): RazorpayBillingProvider {
+    return this.razorpayProvider;
   }
 
   async getSubscription(userId: string) {
@@ -38,32 +44,167 @@ export class BillingService {
       include: { trial: true },
     });
 
+    const plans = await this.prisma.plan.findMany({
+      where: { active: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+
     return {
       subscription: sub,
       trial: user?.trial,
+      availablePlans: plans,
     };
   }
 
   async createCheckoutSession(userId: string, planCode: string, successUrl?: string, cancelUrl?: string) {
+    return this.createRazorpayPaymentLink(userId, planCode, successUrl);
+  }
+
+  async createRazorpayPaymentLink(userId: string, planCode: string, callbackUrl?: string) {
+    if (!planCode) {
+      throw new BadRequestException({ code: 'INVALID_PLAN', message: 'Plan code is required' });
+    }
+
     const plan = await this.prisma.plan.findUnique({
       where: { code: planCode.toUpperCase() },
     });
     if (!plan || plan.code === 'TRIAL') {
-      throw new BadRequestException({ code: 'INVALID_PLAN', message: 'Can only checkout paid plans (SILVER or GOLD)' });
+      throw new BadRequestException({
+        code: 'INVALID_PLAN',
+        message: 'Can only subscribe to paid plans (SILVER or GOLD)',
+      });
     }
 
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { profile: true },
+    });
     if (!user) {
       throw new NotFoundException({ code: 'USER_NOT_FOUND', message: 'User not found' });
     }
 
-    return this.provider.createCheckoutSession({
+    const userName =
+      user.displayName || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email;
+
+    const linkResult = await this.razorpayProvider.createPaymentLink({
       userId,
-      email: user.email,
-      planCode: plan.code,
-      successUrl,
-      cancelUrl,
+      userEmail: user.email,
+      userName,
+      plan: {
+        code: plan.code,
+        name: plan.name,
+        priceAmount: plan.priceAmount,
+        currency: plan.currency || 'INR',
+      },
+      callbackUrl,
     });
+
+    return {
+      ...linkResult,
+      plan: {
+        id: plan.id,
+        code: plan.code,
+        name: plan.name,
+        description: plan.description,
+        priceAmount: plan.priceAmount,
+        currency: plan.currency || 'INR',
+      },
+    };
+  }
+
+  async createRazorpayOrder(userId: string, planCode: string) {
+    if (!planCode) {
+      throw new BadRequestException({ code: 'INVALID_PLAN', message: 'Plan code is required' });
+    }
+
+    const plan = await this.prisma.plan.findUnique({
+      where: { code: planCode.toUpperCase() },
+    });
+    if (!plan || plan.code === 'TRIAL') {
+      throw new BadRequestException({
+        code: 'INVALID_PLAN',
+        message: 'Can only subscribe to paid plans (SILVER or GOLD)',
+      });
+    }
+
+    return this.razorpayProvider.createOrder({
+      userId,
+      plan: {
+        code: plan.code,
+        name: plan.name,
+        priceAmount: plan.priceAmount,
+        currency: plan.currency || 'INR',
+      },
+    });
+  }
+
+  async verifyRazorpayPayment(
+    userId: string,
+    data: {
+      planCode: string;
+      razorpayPaymentId: string;
+      razorpayPaymentLinkId?: string;
+      razorpayOrderId?: string;
+      razorpaySignature?: string;
+    },
+  ) {
+    const { planCode, razorpayPaymentId, razorpayOrderId, razorpaySignature } = data;
+
+    if (!planCode || !razorpayPaymentId) {
+      throw new BadRequestException({
+        code: 'INVALID_PAYMENT_DATA',
+        message: 'Plan code and Razorpay payment ID are required for verification',
+      });
+    }
+
+    // Verify signature if provided
+    if (razorpayOrderId && razorpaySignature) {
+      const isValid = this.razorpayProvider.verifyPaymentSignature(
+        razorpayOrderId,
+        razorpayPaymentId,
+        razorpaySignature,
+      );
+      if (!isValid) {
+        throw new BadRequestException({
+          code: 'INVALID_SIGNATURE',
+          message: 'Razorpay payment signature verification failed',
+        });
+      }
+    }
+
+    // Upgrade customer plan
+    const updatedSub = await this.changePlan(userId, planCode);
+
+    // Update subscription to reflect razorpay provider
+    await this.prisma.subscription.update({
+      where: { id: updatedSub.id },
+      data: {
+        provider: 'razorpay',
+        providerSubscriptionId: razorpayPaymentId,
+      },
+    });
+
+    // Update the payment record with razorpay provider payment id
+    const latestPayment = await this.prisma.payment.findFirst({
+      where: { userId, subscriptionId: updatedSub.id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (latestPayment) {
+      await this.prisma.payment.update({
+        where: { id: latestPayment.id },
+        data: {
+          providerPaymentId: razorpayPaymentId,
+        },
+      });
+    }
+
+    return {
+      success: true,
+      message: `Successfully activated ${planCode} subscription!`,
+      subscription: updatedSub,
+      paymentId: razorpayPaymentId,
+    };
   }
 
   async previewPlanChange(userId: string, targetPlanCode: string) {
