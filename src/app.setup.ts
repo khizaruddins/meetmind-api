@@ -92,6 +92,7 @@ export function configureApp(app: INestApplication) {
     .setTitle('Meeting Recorder SaaS API')
     .setDescription('Full commercial SaaS Backend, Auth, Licensing, Subscriptions, Usage, Admin APIs, and Webhooks')
     .setVersion('1.0.0')
+    .addTag('OCR', 'OCR and screenshot text extraction')
     .addBearerAuth()
     .build();
 

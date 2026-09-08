@@ -54,6 +54,7 @@ export class EntitlementsService {
         acc[f.featureKey] = f.enabled;
         return acc;
       }, {} as Record<string, boolean>);
+      features.ocr = true;
 
       // Build signed offline license token (7-day offline validity)
       const offlineExpiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -110,6 +111,7 @@ export class EntitlementsService {
       microphone: true,
       mp4Output: true,
       localRecordingHistory: true,
+      ocr: true,
       unlimitedRecording: false,
       transcription: false,
       speakerDiarization: false,

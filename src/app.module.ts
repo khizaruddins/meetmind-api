@@ -76,6 +76,9 @@ import { AdminAuditController } from './admin-api/admin-audit.controller';
 import { HealthService } from './health/health.service';
 import { HealthController } from './health/health.controller';
 
+// OCR
+import { OcrModule } from './ocr/ocr.module';
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -87,6 +90,7 @@ import { HealthController } from './health/health.controller';
         limit: 120,
       },
     ]),
+    OcrModule,
   ],
   controllers: [
     AuthController,
