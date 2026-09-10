@@ -93,6 +93,7 @@ export function configureApp(app: INestApplication) {
     .setDescription('Full commercial SaaS Backend, Auth, Licensing, Subscriptions, Usage, Admin APIs, and Webhooks')
     .setVersion('1.0.0')
     .addTag('OCR', 'OCR and screenshot text extraction')
+    .addTag('Screenshots', 'Daily screenshot authorization and quota')
     .addBearerAuth()
     .build();
 

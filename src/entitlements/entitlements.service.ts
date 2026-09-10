@@ -1,6 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { PrismaService } from '../common/prisma.service';
+import {
+  buildCountQuota,
+  getDailyOcrLimit,
+  getDailyScreenshotLimit,
+  normalizePlanCode,
+} from '../common/plan-limits';
 
 @Injectable()
 export class EntitlementsService {
@@ -43,18 +49,28 @@ export class EntitlementsService {
     });
 
     const usedTodaySeconds = dailyUsage ? dailyUsage.recordingSeconds : 0;
+    const usedScreenshotsToday = dailyUsage?.screenshotCount || 0;
+    const usedOcrToday = dailyUsage?.aiRequests || 0;
     const now = new Date();
 
     const activeSub = user.subscriptions[0];
     const isPaidActive = activeSub && activeSub.status === 'ACTIVE' && (activeSub.plan.code === 'SILVER' || activeSub.plan.code === 'GOLD');
 
     if (isPaidActive) {
-      const planCode = activeSub.plan.code.toLowerCase();
+      const planCode = normalizePlanCode(activeSub.plan.code);
       const features = activeSub.plan.planFeatures.reduce((acc, f) => {
         acc[f.featureKey] = f.enabled;
         return acc;
       }, {} as Record<string, boolean>);
       features.ocr = true;
+      features.screenshots = true;
+
+      const screenshots = buildCountQuota(
+        getDailyScreenshotLimit(planCode),
+        usedScreenshotsToday,
+        true,
+      );
+      const ocr = buildCountQuota(getDailyOcrLimit(planCode), usedOcrToday, true);
 
       // Build signed offline license token (7-day offline validity)
       const offlineExpiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -65,6 +81,10 @@ export class EntitlementsService {
         subscriptionStatus: 'active',
         issuedAt: now.toISOString(),
         expiresAt: offlineExpiresAt.toISOString(),
+        usageLimits: {
+          screenshotsDaily: screenshots.dailyLimit,
+          ocrDaily: ocr.dailyLimit,
+        },
       };
 
       const secret = process.env.OFFLINE_ENTITLEMENT_SECRET || 'dev-entitlement-hmac-secret-meeting-recorder-2026';
@@ -82,6 +102,8 @@ export class EntitlementsService {
           usedTodaySeconds,
           remainingTodaySeconds: null,
         },
+        screenshots,
+        ocr,
         features,
         offlineLicense: {
           payload: snapshotPayload,
@@ -112,6 +134,7 @@ export class EntitlementsService {
       mp4Output: true,
       localRecordingHistory: true,
       ocr: true,
+      screenshots: true,
       unlimitedRecording: false,
       transcription: false,
       speakerDiarization: false,
@@ -140,6 +163,12 @@ export class EntitlementsService {
         usedTodaySeconds,
         remainingTodaySeconds: remainingToday,
       },
+      screenshots: buildCountQuota(
+        getDailyScreenshotLimit('trial'),
+        usedScreenshotsToday,
+        isTrialActive,
+      ),
+      ocr: buildCountQuota(getDailyOcrLimit('trial'), usedOcrToday, isTrialActive),
       features,
       offlineLicense: null, // Trial does not support offline license caching without server contact
     };

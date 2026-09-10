@@ -116,8 +116,15 @@ export class AdminTrialsService {
     const todayStr = new Date().toISOString().split('T')[0];
     await this.prisma.dailyUsage.upsert({
       where: { userId_usageDate: { userId, usageDate: todayStr } },
-      create: { userId, usageDate: todayStr, recordingSeconds: 0, recordingCount: 0 },
-      update: { recordingSeconds: 0 },
+      create: {
+        userId,
+        usageDate: todayStr,
+        recordingSeconds: 0,
+        recordingCount: 0,
+        screenshotCount: 0,
+        aiRequests: 0,
+      },
+      update: { recordingSeconds: 0, screenshotCount: 0, aiRequests: 0 },
     });
 
     await this.auditService.log({

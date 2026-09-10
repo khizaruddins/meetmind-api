@@ -23,6 +23,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let code = 'INTERNAL_SERVER_ERROR';
     let message: any = 'An internal server error occurred';
+    let details: Record<string, unknown> = {};
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -34,6 +35,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
         const obj = res as Record<string, any>;
         message = obj.message || obj.error || message;
         code = obj.code || this.statusCodeToErrorCode(status);
+        const {
+          message: _message,
+          code: _code,
+          error: _error,
+          statusCode: _statusCode,
+          ...rest
+        } = obj;
+        details = rest;
       }
     } else if (exception instanceof Error) {
       this.logger.error(`[${requestId}] Unhandled Exception: ${exception.message}`, exception.stack);
@@ -48,6 +57,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
         code,
         message,
         requestId,
+        ...details,
       },
     });
   }

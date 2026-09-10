@@ -205,6 +205,8 @@ async function main() {
     'microphone',
     'mp4Output',
     'localRecordingHistory',
+    'screenshots',
+    'ocr',
   ];
 
   const aiFeatures = [

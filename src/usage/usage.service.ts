@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
+import { getDailyOcrLimit, getDailyScreenshotLimit } from '../common/plan-limits';
 
 @Injectable()
 export class UsageService {
@@ -26,10 +27,15 @@ export class UsageService {
     });
 
     const isPaid = activeSub && (activeSub.plan.code === 'SILVER' || activeSub.plan.code === 'GOLD');
+    const plan = isPaid ? activeSub.plan.code.toLowerCase() : 'trial';
     const limitSeconds = isPaid ? null : 1800;
     const recordingSeconds = usage ? usage.recordingSeconds : 0;
     const recordings = usage ? usage.recordingCount : 0;
     const remainingSeconds = limitSeconds !== null ? Math.max(0, limitSeconds - recordingSeconds) : null;
+    const screenshotLimit = getDailyScreenshotLimit(plan);
+    const ocrLimit = getDailyOcrLimit(plan);
+    const screenshots = usage?.screenshotCount || 0;
+    const ocrRequests = usage?.aiRequests || 0;
 
     return {
       today: {
@@ -39,7 +45,13 @@ export class UsageService {
         limitSeconds,
         remainingSeconds,
         transcriptionSeconds: usage?.transcriptionSeconds || 0,
-        aiRequests: usage?.aiRequests || 0,
+        aiRequests: ocrRequests,
+        screenshots,
+        screenshotLimit,
+        screenshotsRemaining: Math.max(0, screenshotLimit - screenshots),
+        ocrRequests,
+        ocrLimit,
+        ocrRemaining: Math.max(0, ocrLimit - ocrRequests),
       },
     };
   }

@@ -247,6 +247,7 @@ model DailyUsage {
   recordingCount       Int      @default(0) @map("recording_count")
   transcriptionSeconds Int      @default(0) @map("transcription_seconds")
   aiRequests           Int      @default(0) @map("ai_requests")
+  screenshotCount      Int      @default(0) @map("screenshot_count")
   createdAt            DateTime @default(now()) @map("created_at")
   updatedAt            DateTime @updatedAt @map("updated_at")
 
