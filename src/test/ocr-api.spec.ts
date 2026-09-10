@@ -80,15 +80,15 @@ describe('OCR Platform APIs (Milestone V2.3)', () => {
   });
 
   describe('Usage & Quotas', () => {
-    it('should return initial daily quota for customer (trial = 10)', async () => {
+    it('should return initial daily quota for customer (trial = 20)', async () => {
       const res = await request(app.getHttpServer())
         .get('/v1/ocr/usage')
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
-      expect(res.body.dailyLimit).toBe(10);
+      expect(res.body.dailyLimit).toBe(20);
       expect(res.body.usedToday).toBe(0);
-      expect(res.body.remainingToday).toBe(10);
+      expect(res.body.remainingToday).toBe(20);
       expect(res.body.plan).toBe('trial');
     });
   });
@@ -150,7 +150,7 @@ describe('OCR Platform APIs (Milestone V2.3)', () => {
         .expect(200);
 
       expect(res.body.usedToday).toBe(1);
-      expect(res.body.remainingToday).toBe(9);
+      expect(res.body.remainingToday).toBe(19);
     });
 
     it('should handle provider timeout gracefully with status FAILED', async () => {
@@ -173,7 +173,7 @@ describe('OCR Platform APIs (Milestone V2.3)', () => {
     });
 
     it('should enforce daily quota and return 429 when exhausted', async () => {
-      // Artificially set aiRequests to 10 in dailyUsage
+      // Artificially set aiRequests to the trial daily OCR limit
       const todayStr = new Date().toISOString().split('T')[0];
       await prisma.dailyUsage.upsert({
         where: {
@@ -185,10 +185,10 @@ describe('OCR Platform APIs (Milestone V2.3)', () => {
         create: {
           userId,
           usageDate: todayStr,
-          aiRequests: 10,
+          aiRequests: 20,
         },
         update: {
-          aiRequests: 10,
+          aiRequests: 20,
         },
       });
 

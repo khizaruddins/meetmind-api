@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Inject,
@@ -14,6 +15,11 @@ import {
   OcrProvider,
   OcrResult,
 } from './providers/ocr-provider.interface';
+import {
+  buildCountQuota,
+  getDailyOcrLimit,
+  normalizePlanCode,
+} from '../common/plan-limits';
 
 const ALLOWED_MIME_TYPES = new Set([
   'image/png',
@@ -36,15 +42,8 @@ export class OcrService {
 
   async getDailyQuota(userId: string) {
     const entitlements = await this.entitlementsService.getEntitlements(userId);
-    const plan = (entitlements.plan || 'trial').toLowerCase();
-
-    let dailyLimit = 10; // Trial default
-    if (plan === 'silver') {
-      dailyLimit = 25;
-    } else if (plan === 'gold') {
-      dailyLimit = 100;
-    }
-
+    const plan = normalizePlanCode(entitlements.plan);
+    const dailyLimit = getDailyOcrLimit(plan);
     const todayStr = this.entitlementsService.getTodayUtcString();
     const daily = await this.prisma.dailyUsage.findUnique({
       where: {
@@ -56,14 +55,14 @@ export class OcrService {
     });
 
     const usedToday = daily?.aiRequests || 0;
-    const remainingToday = Math.max(0, dailyLimit - usedToday);
+    const planAllows =
+      plan !== 'trial' || Boolean(entitlements.trial && entitlements.trial.active);
+    const quota = buildCountQuota(dailyLimit, usedToday, planAllows);
 
     return {
       today: todayStr,
-      dailyLimit,
-      usedToday,
-      remainingToday,
       plan,
+      ...quota,
     };
   }
 
@@ -96,13 +95,21 @@ export class OcrService {
     }
 
     const quota = await this.getDailyQuota(userId);
-    if (quota.remainingToday <= 0) {
+    if (quota.plan === 'trial' && !quota.allowed && quota.remainingToday > 0) {
+      throw new ForbiddenException({
+        code: 'TRIAL_EXPIRED',
+        message: 'Your 30-day trial has expired. Upgrade to continue using OCR.',
+      });
+    }
+    if (!quota.allowed || quota.remainingToday <= 0) {
       throw new HttpException(
         {
           code: 'OCR_QUOTA_EXCEEDED',
           message: `Daily OCR quota limit (${quota.dailyLimit} extractions) reached for ${quota.plan} plan.`,
           dailyLimit: quota.dailyLimit,
           usedToday: quota.usedToday,
+          remainingToday: 0,
+          plan: quota.plan,
         },
         HttpStatus.TOO_MANY_REQUESTS,
       );
@@ -120,7 +127,6 @@ export class OcrService {
     });
 
     if (result.status === 'COMPLETED') {
-      // Increment daily usage count in Neon PostgreSQL
       const todayStr = this.entitlementsService.getTodayUtcString();
       await this.prisma.dailyUsage.upsert({
         where: {

@@ -138,6 +138,12 @@ describe('Customer Platform APIs (Milestone 7)', () => {
       expect(res.body.features.unlimitedRecording).toBe(false);
       expect(res.body.features.transcription).toBe(false);
       expect(res.body.features.aiSummary).toBe(false);
+      expect(res.body.screenshots.dailyLimit).toBe(20);
+      expect(res.body.screenshots.usedToday).toBe(0);
+      expect(res.body.screenshots.remainingToday).toBe(20);
+      expect(res.body.ocr.dailyLimit).toBe(20);
+      expect(res.body.ocr.usedToday).toBe(0);
+      expect(res.body.ocr.remainingToday).toBe(20);
     });
 
     it('should authorize recording and return maxDurationSeconds', async () => {
@@ -241,6 +247,8 @@ describe('Customer Platform APIs (Milestone 7)', () => {
       expect(entRes.body.plan).toBe('silver');
       expect(entRes.body.recording.allowed).toBe(true);
       expect(entRes.body.recording.dailyLimitSeconds).toBeNull();
+      expect(entRes.body.screenshots.dailyLimit).toBe(50);
+      expect(entRes.body.ocr.dailyLimit).toBe(50);
       expect(entRes.body.features.unlimitedRecording).toBe(true);
       expect(entRes.body.features.transcription).toBe(false);
       expect(entRes.body.offlineLicense).toBeDefined();
@@ -272,6 +280,8 @@ describe('Customer Platform APIs (Milestone 7)', () => {
         .expect(200);
 
       expect(entRes.body.plan).toBe('gold');
+      expect(entRes.body.screenshots.dailyLimit).toBe(80);
+      expect(entRes.body.ocr.dailyLimit).toBe(80);
       expect(entRes.body.features.unlimitedRecording).toBe(true);
       expect(entRes.body.features.transcription).toBe(true);
       expect(entRes.body.features.speakerDiarization).toBe(true);

@@ -78,6 +78,8 @@ import { HealthController } from './health/health.controller';
 
 // OCR
 import { OcrModule } from './ocr/ocr.module';
+import { ScreenshotsService } from './screenshots/screenshots.service';
+import { ScreenshotsController } from './screenshots/screenshots.controller';
 
 @Module({
   imports: [
@@ -120,6 +122,7 @@ import { OcrModule } from './ocr/ocr.module';
     AdminReportsController,
     AdminAuditController,
     HealthController,
+    ScreenshotsController,
   ],
   providers: [
     PrismaService,
@@ -157,6 +160,7 @@ import { OcrModule } from './ocr/ocr.module';
     AdminReportsService,
     AdminAuditLogService,
     HealthService,
+    ScreenshotsService,
   ],
 })
 export class AppModule {}
